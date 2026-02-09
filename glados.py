@@ -2,12 +2,14 @@
 from playwright.sync_api import sync_playwright
 import os
 import re
+import time
 
-# 你的 Windows Chrome 指纹
+# 模拟 Windows Chrome 122，保持和你本地一致
 REAL_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
 def glados_checkin(cookie_string):
     with sync_playwright() as p:
+        # 启动浏览器
         browser = p.chromium.launch(
             headless=True,
             args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
@@ -18,7 +20,7 @@ def glados_checkin(cookie_string):
             viewport={'width': 1920, 'height': 1080}
         )
         
-        # 注入 Cookie
+        # --- 1. 注入 Cookie (关键修改：domain 设为 .glados.cloud) ---
         cookies_list = []
         for part in cookie_string.split(';'):
             if '=' in part:
@@ -26,7 +28,7 @@ def glados_checkin(cookie_string):
                 cookies_list.append({
                     'name': name,
                     'value': value,
-                    'domain': '.glados.rocks',
+                    'domain': '.glados.cloud',  # 这里必须是 cloud
                     'path': '/'
                 })
         context.add_cookies(cookies_list)
@@ -34,17 +36,23 @@ def glados_checkin(cookie_string):
         page = context.new_page()
 
         try:
-            print(f">>> [Playwright] 正在访问...")
-            page.goto("https://glados.rocks/console/checkin")
-            # 等待页面 JS 加载完成
-            page.wait_for_selector("body", timeout=15000)
-            page.wait_for_timeout(5000)
+            target_url = "https://glados.cloud/console/checkin"
+            print(f">>> [Playwright] 正在访问: {target_url}")
+            
+            page.goto(target_url)
+            # 等待页面加载，React 应用需要时间渲染
+            page.wait_for_timeout(8000)
 
+            # 截图保存初始状态
+            page.screenshot(path="evidence.png")
+
+            # 检查是否掉登录
             if "login" in page.url:
-                return "【失败】Cookie 无效，已跳转至登录页！"
+                return "【失败】Cookie 无效或域名不匹配，已跳转至登录页！请重新在 .cloud 域名下抓取 Cookie。"
 
-            # --- 1. 执行签到 ---
+            # --- 2. 寻找并点击按钮 ---
             print(">>> [Playwright] 寻找签到按钮...")
+            # 尝试多种定位方式
             checkin_btn = page.locator("button").filter(has_text="签到")
             if checkin_btn.count() == 0:
                 checkin_btn = page.locator("button").filter(has_text="Checkin")
@@ -55,35 +63,34 @@ def glados_checkin(cookie_string):
                 checkin_btn.first.click(force=True)
                 msg = "已点击按钮"
                 
-                # 【优化点1】点击后，耐心等待 10 秒，让子弹飞一会儿
-                print(">>> 等待 10 秒让数据同步...")
+                # 点击后等待 10 秒，让数据提交
+                print(">>> 点击完成，等待 10 秒...")
                 page.wait_for_timeout(10000)
             else:
                 msg = "未找到按钮 (可能今日已签过)"
 
-            # --- 2. 刷新页面 (关键优化) ---
-            print(">>> 正在刷新页面以获取最新历史...")
+            # --- 3. 刷新页面验证结果 ---
+            print(">>> 正在刷新页面读取最新历史...")
             page.reload()
-            # 刷新后再次等待加载
             page.wait_for_timeout(5000)
+            # 再次截图，方便看结果
+            page.screenshot(path="evidence.png")
 
-            # --- 3. 核对 History 记录 ---
-            print(">>> 读取最新 History 记录...")
+            # --- 4. 读取 History ---
             history_info = "未获取到记录"
             try:
                 # 等待表格出现
-                page.wait_for_selector("table tbody tr", timeout=10000)
-                # 读取第一行
+                page.wait_for_selector("table tbody tr", timeout=5000)
                 first_row = page.locator("table tbody tr").first
                 if first_row.is_visible():
                     history_text = first_row.inner_text()
                     history_info = history_text.replace("\n", " | ")
                 else:
                     history_info = "表格为空"
-            except Exception as h_err:
-                history_info = f"表格读取未就绪: {str(h_err)}"
+            except:
+                history_info = "表格读取失败 (可能未加载)"
 
-            # --- 4. 获取剩余天数 ---
+            # --- 5. 读取剩余天数 ---
             try:
                 days_text = page.locator(".u-h1").first.inner_text()
                 days_num = re.findall(r"\d+\.?\d*", days_text)
@@ -93,7 +100,7 @@ def glados_checkin(cookie_string):
 
             return (f"------------------------------\n"
                     f"【操作状态】: {msg}\n"
-                    f"【刷新后最新历史】: {history_info}\n"
+                    f"【最新历史】: {history_info}\n"
                     f"【当前天数】: {days_str}\n"
                     f"------------------------------")
 
@@ -105,7 +112,7 @@ def glados_checkin(cookie_string):
 if __name__ == "__main__":
     cookie_env = os.environ.get("GLADOS_COOKIE")
     if not cookie_env:
-        print("❌ 请检查 Secrets 配置")
+        print("❌ 未检测到 Cookie，请检查 GitHub Secrets！")
         exit(1)
         
     for idx, cookie in enumerate(cookie_env.split('&')):
