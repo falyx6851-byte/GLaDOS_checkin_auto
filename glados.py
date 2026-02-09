@@ -1,78 +1,84 @@
 # -*- coding: utf-8 -*-
-import requests
-import json
+from playwright.sync_api import sync_playwright
 import os
+import json
 import time
 
-def glados_checkin(cookie):
-    # 恢复使用 rocks 域名，通常这个API更稳定
-    checkin_url = "https://glados.rocks/api/user/checkin"
-    status_url = "https://glados.rocks/api/user/status"
-    
-    # 【超级伪装】模拟真实的 Linux Chrome 浏览器请求
-    # 只有加上 sec-ch-ua 这些头，服务器才会认为你是真人
-    headers = {
-        'authority': 'glados.rocks',
-        'accept': 'application/json, text/plain, */*',
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.6',
-        'content-type': 'application/json;charset=UTF-8',
-        'cookie': cookie,
-        'origin': 'https://glados.rocks',
-        'referer': 'https://glados.rocks/console/checkin',
-        # 下面这几行是关键，模拟浏览器的“安全握手”特征
-        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Linux"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-
-    payload = {
-        "token": "glados.network"
-    }
-
-    try:
-        print(">>> [模拟真机] 正在尝试签到...")
-        # 发送签到请求
-        response = requests.post(checkin_url, headers=headers, data=json.dumps(payload))
+def glados_checkin(cookie_string):
+    with sync_playwright() as p:
+        # 启动浏览器 (headless=True 无头模式)
+        # args 参数是为了尽可能模拟真实环境，规避检测
+        browser = p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+        )
         
-        # 无论签到成功与否，都强制查询一次天数
-        time.sleep(1)
-        status_resp = requests.get(status_url, headers=headers)
+        # 创建上下文，并注入 User-Agent
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
         
-        # 解析剩余天数
-        if status_resp.status_code == 200:
-            raw_days = status_resp.json().get("data", {}).get("leftDays")
-            days_str = str(int(float(raw_days)))
-        else:
-            days_str = "查询失败"
+        # 注入 Cookie
+        # Playwright 需要 domain, path 等字段
+        cookies = []
+        for item in cookie_string.split(';'):
+            if '=' in item:
+                k, v = item.strip().split('=', 1)
+                cookies.append({
+                    'name': k, 
+                    'value': v, 
+                    'domain': '.glados.rocks', 
+                    'path': '/'
+                })
+        context.add_cookies(cookies)
 
-        # 解析签到结果
-        if response.status_code == 200:
-            res_json = response.json()
-            msg = res_json.get("message")
-            code = res_json.get("code")
+        page = context.new_page()
+
+        try:
+            print(">>> [Playwright] 正在访问签到页...")
+            # 1. 访问页面，触发 Cloudflare 验证
+            page.goto("https://glados.rocks/console/checkin")
+            # 等待 5 秒，让 CF 盾飞一会儿
+            page.wait_for_timeout(5000)
+
+            print(">>> [Playwright] 执行签到...")
+            # 2. 也是通过 JS 执行 Fetch，这样最稳，因为它带上了当前页面的所有指纹
+            checkin_js = """
+                async () => {
+                    const response = await fetch("https://glados.rocks/api/user/checkin", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({token: "glados.network"})
+                    });
+                    return response.json();
+                }
+            """
+            result = page.evaluate(checkin_js)
             
-            # 这里的逻辑是：只要还能查到天数，哪怕签到报错，我们也认为脚本至少跑通了
-            return (f"------------------------------\n"
-                    f"【执行结果】: {msg} (Code: {code})\n"
-                    f"【剩余天数】: {days_str} 天\n"
-                    f"------------------------------")
-        else:
-            return f"【网络请求失败】: HTTP {response.status_code}"
+            # 3. 获取剩余天数
+            status_js = """
+                async () => {
+                    const response = await fetch("https://glados.rocks/api/user/status");
+                    return response.json();
+                }
+            """
+            status_res = page.evaluate(status_js)
+            days = status_res.get("data", {}).get("leftDays", "?")
 
-    except Exception as e:
-        return f"【脚本错误】: {str(e)}"
+            return f"------------------------------\n【Playwright 结果】: {result.get('message')}\n【剩余天数】: {int(float(days))} 天\n------------------------------"
+
+        except Exception as e:
+            return f"【运行报错】: {str(e)}"
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
     cookie_string = os.environ.get("GLADOS_COOKIE")
     if not cookie_string:
-        print("❌ 未找到 Cookie，请检查 Secrets 设置")
+        print("❌ 未配置 COOKIE")
         exit(1)
-    
-    cookies = cookie_string.split("&")
-    for idx, cookie in enumerate(cookies):
-        print(f"\n正在执行第 {idx+1} 个账号...")
+        
+    for idx, cookie in enumerate(cookie_string.split('&')):
+        print(f"正在执行第 {idx+1} 个账号...")
         print(glados_checkin(cookie))
