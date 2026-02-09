@@ -1,33 +1,34 @@
-
-name: 开始每日签到
+name: GLaDOS Checkin
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ master ]
   schedule:
-    # UTC 1点30分(北京时间 9点30分)
-    - cron: 30 1 * * *
-  # 标星时触发工作流程
-  watch:
-    types: [started]
+    - cron: '0 1 * * *'  # 每天 UTC 时间 1:00 (北京时间 9:00) 运行
+  workflow_dispatch:      # 允许手动运行
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v3
-        with:
-          python-version: 3.9
-      - name: Install requirements
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-      - name: Run checkin
-        run: |
-          python3 glados.py
-        env: 
-          GLADOS_COOKIE: "${{ secrets.GLADOS_COOKIE }}"
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      - uses: gautamkrishnar/keepalive-workflow@master  
+    # 1. 下载你自己仓库的代码（而不是去下载别人的）
+    - uses: actions/checkout@v3
 
+    # 2. 准备 Python 环境
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+
+    # 3. 安装必要的依赖库
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    # 4. 运行签到脚本
+    - name: Run Checkin
+      env:
+        GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
+        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }} # 如果没配置这个可以忽略
+      run: python glados.py
