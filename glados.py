@@ -2,7 +2,7 @@ import requests
 import json
 import os
 
-# 1. 获取 Cookie
+# 1. 从环境变量获取 Cookie
 # 这里的 environ.get 会去读取你在 GitHub Secrets 里填的 GLADOS_COOKIE
 cookies = os.environ.get("GLADOS_COOKIE", []).split("&")
 
@@ -12,7 +12,7 @@ if not cookies or cookies[0] == "":
     exit(1)
 
 def checkin(cookie):
-    # 这是目前最新的 API 地址，不用改
+    # 这是目前最新的 API 地址
     checkin_url = "https://glados.rocks/api/user/checkin"
     status_url = "https://glados.rocks/api/user/status"
     
