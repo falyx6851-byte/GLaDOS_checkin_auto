@@ -1,37 +1,11 @@
-name: GLaDOS 定时签到
-
-on:
-  # 每天北京时间上午 9:30 运行 (UTC 1:30)
-  schedule:
-    - cron: '30 1 * * *'
-  # 允许手动点按钮触发
-  workflow_dispatch:
-  # 每次修改代码后自动测试一次
-  push:
-    branches: [ master, main ]
-
-jobs:
-  daily-checkin:
-    runs-on: ubuntu-latest
-    
-    steps:
-      # 1. 拉取刚才写的代码
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      # 2. 准备 Python 环境
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      # 3. 安装依赖库 (Requests)
+# 修改安装依赖这一步
       - name: Install Dependencies
-        run: pip install requests
+        run: |
+          pip install playwright requests
+          playwright install chromium # 安装浏览器内核
 
-      # 4. 运行我们手搓的脚本
+      # 运行步骤不用变，还是 python glados.py
       - name: Start Checkin
         env:
-          # 这一步会自动读取你在 Settings -> Secrets 里填的 cookie
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
         run: python glados.py
