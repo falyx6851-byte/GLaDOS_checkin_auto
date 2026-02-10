@@ -2,9 +2,16 @@ name: GLaDOS Checkin
 
 on:
   schedule:
-    # 北京时间 9:00 (UTC 1:00)
-    - cron: '0 1 * * *'
+    # 第1次：UTC 22:37 = 北京时间 06:37 (早高峰前)
+    - cron: '37 22 * * *'
+    
+    # 第2次：UTC 09:37 = 北京时间 17:37 (晚高峰前补签)
+    - cron: '37 9 * * *'
+    
+  # 允许手动立即运行
   workflow_dispatch:
+  
+  # 每次修改代码时自动测试一次
   push:
     branches: [ master, main ]
 
@@ -31,7 +38,7 @@ jobs:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
         run: python glados.py
       
-      # 保留截图功能，万一报错方便排查
+      # 保留截图功能，方便出问题时排查（保留1天）
       - name: Upload Debug Artifact
         uses: actions/upload-artifact@v4
         if: always()
